@@ -31,7 +31,7 @@ export function MockResponse({ blocks }: MockResponseProps) {
           <div>
             <div className="font-display text-sm font-semibold uppercase tracking-wider">Mock Response</div>
             <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-              lexicon · structure-aware preview
+              pre-authored · structure-keyed sample
             </div>
           </div>
         </div>
@@ -72,10 +72,13 @@ export function MockResponse({ blocks }: MockResponseProps) {
           >
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-md bg-primary/15 px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-primary-glow">
-                {response.meta.style}
+                {response.matchedCase}
               </span>
               <span className="rounded-md bg-secondary px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                {response.meta.length}
+                {response.quality}
+              </span>
+              <span className="rounded-md bg-secondary px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                {response.meta.style}
               </span>
             </div>
 

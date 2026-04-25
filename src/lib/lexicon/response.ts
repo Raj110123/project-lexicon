@@ -1,10 +1,11 @@
 import type { Block, BlockType } from "./blocks";
 
 /**
- * Deterministic mock-response engine.
- * The shape of the response changes based on which block types are present,
- * and surface details echo content from the user's blocks — so it FEELS
- * like the prompt is shaping the output.
+ * Pre-authored mock responses keyed to AST block structure.
+ *
+ * This intentionally does not call an LLM. The PS asks us to demonstrate that
+ * prompt structure affects output, so each response is a curated sample chosen
+ * from the block types currently present in the prompt.
  */
 
 export interface MockResponse {
@@ -12,79 +13,176 @@ export interface MockResponse {
   summary: string;
   bullets: string[];
   footer: string;
+  matchedCase: string;
+  quality: "strong" | "focused" | "partial" | "generic";
   meta: {
-    style: "structured" | "freeform";
+    style: "structured" | "guided" | "freeform";
     voice: string;
     length: string;
   };
 }
 
-function pickFirstSentence(text: string, max = 140): string {
-  const t = text.trim();
-  if (!t) return "";
-  const m = t.match(/^([^.!?\n]+[.!?])/);
-  const out = (m ? m[1] : t).trim();
-  return out.length > max ? out.slice(0, max - 1).trim() + "…" : out;
-}
+type StructureFlags = Record<BlockType, boolean>;
 
-function get(blocks: Block[], type: BlockType): string | undefined {
-  return blocks.find((b) => b.type === type)?.text?.trim();
+function detectStructure(blocks: Block[]): StructureFlags {
+  return {
+    role: blocks.some((b) => b.type === "role"),
+    context: blocks.some((b) => b.type === "context"),
+    constraint: blocks.some((b) => b.type === "constraint"),
+    format: blocks.some((b) => b.type === "format"),
+    tone: blocks.some((b) => b.type === "tone"),
+    example: blocks.some((b) => b.type === "example"),
+    length: blocks.some((b) => b.type === "length"),
+  };
 }
 
 export function generateMockResponse(blocks: Block[]): MockResponse {
-  const role = get(blocks, "role");
-  const context = get(blocks, "context");
-  const constraint = get(blocks, "constraint");
-  const format = get(blocks, "format");
-  const tone = get(blocks, "tone");
-  const example = get(blocks, "example");
-  const length = get(blocks, "length");
+  const has = detectStructure(blocks);
 
-  const present = new Set(blocks.map((b) => b.type));
-  const structured = present.has("format");
-  const voice = tone ? pickFirstSentence(tone, 60) : "Neutral, informative.";
-  const lengthLabel = length ? pickFirstSentence(length, 60) : "Standard response length.";
-
-  // Title — derived from role/context
-  let title = "Composed Response";
-  if (role) {
-    const roleSubject = role.replace(/^you are\s+/i, "").trim();
-    const subj = roleSubject.split(/[,.]/)[0];
-    title = `Notes from ${subj.length > 60 ? subj.slice(0, 60) + "…" : subj}`;
-  } else if (context) {
-    title = pickFirstSentence(context, 70) || title;
+  if (has.role && has.context && has.constraint && has.format && has.tone && has.example && has.length) {
+    return {
+      matchedCase: "Full architecture",
+      quality: "strong",
+      title: "Polished Strategy Brief",
+      summary:
+        "A precise, role-aware answer that explains the recommendation, respects constraints, follows the requested format, and mirrors the provided example pattern.",
+      bullets: [
+        "Starts with a confident expert framing because the Role block defines who is speaking.",
+        "Grounds the answer in the project situation instead of giving generic advice.",
+        "Uses the requested structure, tone, and length budget without drifting.",
+        "Includes a concrete example-style output, making the response easier to evaluate.",
+      ],
+      footer: "Matched all seven structural signals: role, context, constraint, format, tone, example, and output length.",
+      meta: {
+        style: "structured",
+        voice: "Persona-led and tone-calibrated",
+        length: "Length-controlled",
+      },
+    };
   }
 
-  // Summary — composed from context + constraint
-  const parts: string[] = [];
-  if (context) parts.push(`Working from this context: ${pickFirstSentence(context, 120)}`);
-  if (constraint) parts.push(`Within these constraints: ${pickFirstSentence(constraint, 120)}`);
-  if (!parts.length) parts.push("This is a structurally sparse prompt — add a Context block to ground the response.");
-  const summary = parts.join(" ");
+  if (has.context && has.constraint && has.format && has.length && !has.role && !has.tone) {
+    return {
+      matchedCase: "Focused stripped variant",
+      quality: "focused",
+      title: "Lean Execution Plan",
+      summary:
+        "A cleaner response that keeps the task context, rules, format, and size limit while removing persona and voice overhead.",
+      bullets: [
+        "Prioritizes the actual task over performance-style persona language.",
+        "Keeps hard constraints visible, so the answer stays safe and specific.",
+        "Preserves formatting and output length, making the result easy to scan.",
+        "Feels more direct than the full prompt while retaining enough structure to work.",
+      ],
+      footer: "Matched core execution blocks: context, constraint, format, and output length.",
+      meta: {
+        style: "structured",
+        voice: "Neutral and concise",
+        length: "Length-controlled",
+      },
+    };
+  }
 
-  // Bullets — drawn from blocks present
-  const bullets: string[] = [];
-  if (role) bullets.push(`Persona engaged: ${pickFirstSentence(role, 90)}`);
-  if (format) bullets.push(`Output shaped by: ${pickFirstSentence(format, 90)}`);
-  if (constraint) bullets.push(`Guardrails honored: ${pickFirstSentence(constraint, 90)}`);
-  if (example) bullets.push(`Anchored on example: ${pickFirstSentence(example, 90)}`);
-  if (tone) bullets.push(`Tone calibrated: ${pickFirstSentence(tone, 90)}`);
-  if (length) bullets.push(`Length budget: ${pickFirstSentence(length, 90)}`);
-  if (!bullets.length) bullets.push("Drop blocks from the palette to see the response evolve.");
+  if (has.role && has.tone && has.example) {
+    return {
+      matchedCase: "Persona + tone + example",
+      quality: "strong",
+      title: "Expressive Sample Response",
+      summary:
+        "A vivid response with a recognizable voice and example-following behavior, but it may miss project grounding if Context is absent.",
+      bullets: [
+        "Adopts the requested persona and speaks with a deliberate voice.",
+        "Uses the example as a pattern for phrasing and specificity.",
+        "May sound polished even when the task itself is under-specified.",
+      ],
+      footer: "Matched expressive blocks: role, tone, and example.",
+      meta: {
+        style: has.format ? "structured" : "guided",
+        voice: "Expressive and example-led",
+        length: has.length ? "Length-controlled" : "Open-ended",
+      },
+    };
+  }
 
-  const footer = structured
-    ? "Generated as structured markdown per the Format block."
-    : "Generated as a freeform paragraph — add a Format block for structure.";
+  if (has.role && has.tone) {
+    return {
+      matchedCase: "Role + tone",
+      quality: "partial",
+      title: "Clear Voice, Thin Evidence",
+      summary:
+        "A readable response with a strong persona and voice, but the lack of examples or strict constraints makes the output less reliable.",
+      bullets: [
+        "The response sounds intentional because persona and tone are defined.",
+        "Without an Example block, the model has fewer clues about the desired answer pattern.",
+        "Without constraints, it may over-explain or invent details.",
+      ],
+      footer: "Matched voice blocks only: role and tone.",
+      meta: {
+        style: has.format ? "structured" : "guided",
+        voice: "Persona-led",
+        length: has.length ? "Length-controlled" : "Open-ended",
+      },
+    };
+  }
+
+  if (has.context && has.constraint && has.format) {
+    return {
+      matchedCase: "Core structured prompt",
+      quality: "focused",
+      title: "Grounded Structured Answer",
+      summary:
+        "A practical response that knows what problem it is solving, what rules it must follow, and how the final answer should be shaped.",
+      bullets: [
+        "Context grounds the answer in the user’s situation.",
+        "Constraints reduce hallucination and keep the output inside boundaries.",
+        "Format makes the result easier to judge and compare.",
+      ],
+      footer: "Matched core recommended blocks: context, constraint, and format.",
+      meta: {
+        style: "structured",
+        voice: has.tone ? "Tone-calibrated" : "Neutral",
+        length: has.length ? "Length-controlled" : "Standard length",
+      },
+    };
+  }
+
+  if (has.context || has.format || has.constraint) {
+    return {
+      matchedCase: "Partial structure",
+      quality: "partial",
+      title: "Usable but Underspecified",
+      summary:
+        "The response has one or two useful signals, but it lacks enough structure to consistently produce a strong output.",
+      bullets: [
+        "A single structural block improves the answer, but not enough to fully guide it.",
+        "Adding Context, Constraint, and Format together would make the result more dependable.",
+        "The output may vary because important intent is still implicit.",
+      ],
+      footer: "Matched a partial block composition.",
+      meta: {
+        style: has.format ? "structured" : "freeform",
+        voice: has.tone ? "Tone-calibrated" : "Neutral",
+        length: has.length ? "Length-controlled" : "Open-ended",
+      },
+    };
+  }
 
   return {
-    title,
-    summary,
-    bullets: bullets.slice(0, 5),
-    footer,
+    matchedCase: "Minimal / generic",
+    quality: "generic",
+    title: "Generic Response",
+    summary:
+      "A broad answer with minimal guidance. It may be understandable, but it is unlikely to be specific, consistent, or easy to evaluate.",
+    bullets: [
+      "No clear persona, context, constraints, examples, or formatting rules are present.",
+      "The response defaults to generic explanation instead of tailored execution.",
+      "Adding semantic blocks would immediately improve control over the output.",
+    ],
+    footer: "Matched no strong structural pattern.",
     meta: {
-      style: structured ? "structured" : "freeform",
-      voice,
-      length: lengthLabel,
+      style: "freeform",
+      voice: "Generic",
+      length: "Open-ended",
     },
   };
 }
