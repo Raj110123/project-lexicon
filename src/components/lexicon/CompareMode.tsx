@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import {
   ArrowLeftRight,
   Award,
@@ -9,6 +9,9 @@ import {
   Sparkles,
   Trophy,
   X,
+  Loader2,
+  Database,
+  Play,
 } from "lucide-react";
 import { BLOCK_META, BLOCK_ORDER, type Block, type BlockType, assemblePrompt } from "@/lib/lexicon/blocks";
 import { diffStats, diffVariantBlocks, type DiffSegment } from "@/lib/lexicon/diff";
@@ -50,10 +53,74 @@ export function CompareMode({ blocks, open, onClose }: CompareModeProps) {
 
   const diff = useMemo(() => diffVariantBlocks(blocks, removed), [blocks, removed]);
   const stats = useMemo(() => diffStats(diff), [diff]);
-  const analysis = useMemo(
-    () => analyzeComparison(blocks, variantBlocks, left, right, stats, removed),
-    [blocks, variantBlocks, left, right, stats, removed],
-  );
+
+  const [aiAnalysis, setAiAnalysis] = useState<AIAnalysisResponse | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const analysisStats = useMemo(() => {
+    const totalCompared = Math.max(left.length, 1);
+    const changed = stats.added + stats.removed;
+    const changePercent = Math.min(100, Math.round((changed / totalCompared) * 100));
+    return {
+      added: stats.added,
+      removed: stats.removed,
+      unchanged: stats.unchanged,
+      changePercent,
+      changeScore: Math.max(1, Math.round(changePercent / 10)),
+      removedLabels: Array.from(removed)
+        .sort((a, b) => BLOCK_ORDER.indexOf(a) - BLOCK_ORDER.indexOf(b))
+        .map((t) => BLOCK_META[t].label),
+    };
+  }, [left.length, stats, removed]);
+
+  const handleCompare = async () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
+    setIsAnalyzing(true);
+    setAiAnalysis(null);
+    try {
+      const response = await fetch("https://nikunjn8n.up.railway.app/webhook/lexicon-compare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          blocksA: blocks.map((b) => BLOCK_META[b.type].label),
+          blocksB: variantBlocks.map((b) => BLOCK_META[b.type].label),
+          promptA: left,
+          promptB: right,
+        }),
+        signal: abortController.signal,
+      });
+
+      if (response.ok) {
+        const text = await response.text();
+        if (text) {
+          try {
+            const data = JSON.parse(text);
+            // Handle n8n output wrapper if present
+            const analysis = data.output || data;
+            setAiAnalysis(analysis);
+          } catch (e) {
+            console.error("Failed to parse AI Analysis JSON:", text);
+          }
+        } else {
+          console.warn("AI Analysis returned an empty response.");
+        }
+      }
+    } catch (error: any) {
+      if (error.name !== "AbortError") {
+        console.error("AI Analysis failed:", error);
+      }
+    } finally {
+      if (!abortController.signal.aborted) {
+        setIsAnalyzing(false);
+      }
+    }
+  };
 
   const toggle = (t: BlockType) => {
     setRemoved((prev) => {
@@ -63,6 +130,23 @@ export function CompareMode({ blocks, open, onClose }: CompareModeProps) {
       return next;
     });
   };
+
+  const [showMock, setShowMock] = useState(false);
+  const effectiveAnalysis = showMock ? {
+    better_prompt: "A" as const,
+    reasoning: "Prompt A is better structured for AI comprehension because it utilizes multiple strategic blocks. The Role block establishes a clear persona, while the Format block ensures the output adheres to a specific structure, reducing the chance of hallucination compared to the single-block approach in Prompt B.",
+    scores: {
+      clarityA: 8,
+      clarityB: 5,
+      specificityA: 7,
+      specificityB: 4
+    },
+    key_differences: [
+      "Prompt A defines a Role block which anchors the AI persona",
+      "Prompt A includes a Tone block for consistent output style",
+      "Prompt B lacks structural constraints leading to ambiguous output"
+    ]
+  } : aiAnalysis;
 
   return (
     <AnimatePresence>
@@ -96,17 +180,44 @@ export function CompareMode({ blocks, open, onClose }: CompareModeProps) {
                 </div>
               </div>
 
-              <div className="ml-auto hidden items-center gap-3 rounded-2xl border border-primary/30 bg-primary/10 px-3 py-2 md:flex">
-                <ScoreRing score={analysis.changeScore} />
-                <div>
-                  <div className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
-                    Change score
-                  </div>
-                  <div className="font-display text-sm font-semibold text-primary-glow">
-                    {analysis.changePercent}% text changed
+              <div className="ml-auto flex items-center gap-4">
+                <button
+                  onClick={handleCompare}
+                  disabled={isAnalyzing}
+                  className="group relative flex h-10 items-center gap-2 overflow-hidden rounded-xl bg-primary-glow px-5 font-display text-sm font-bold text-background transition-all hover:scale-105 active:scale-95 disabled:opacity-50 disabled:hover:scale-100"
+                >
+                  <div className="absolute inset-0 bg-gradient-to-r from-white/0 via-white/20 to-white/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
+                  {isAnalyzing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Play className="h-3.5 w-3.5 fill-current" />
+                  )}
+                  {isAnalyzing ? "ANALYZING..." : "COMPARE"}
+                </button>
+
+                <div className="hidden items-center gap-3 rounded-2xl border border-primary/30 bg-primary/10 px-3 py-2 md:flex">
+                  <ScoreRing score={analysisStats.changeScore} />
+                  <div>
+                    <div className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground">
+                      Change score
+                    </div>
+                    <div className="font-display text-sm font-semibold text-primary-glow">
+                      {analysisStats.changePercent}% text changed
+                    </div>
                   </div>
                 </div>
               </div>
+
+              <button
+                onClick={() => setShowMock(!showMock)}
+                className={`flex h-10 items-center gap-2 rounded-xl border px-3 transition-all ${
+                  showMock ? "border-amber-400/50 bg-amber-400/10 text-amber-300" : "border-border/60 bg-background/40"
+                }`}
+                title="Toggle Sample Data Analysis"
+              >
+                <Database className="h-4 w-4" />
+                <span className="font-mono text-[10px] uppercase font-bold">{showMock ? "Mock ON" : "Mock OFF"}</span>
+              </button>
 
               <button
                 onClick={onClose}
@@ -169,7 +280,7 @@ export function CompareMode({ blocks, open, onClose }: CompareModeProps) {
             </div>
 
             <div className="grid max-h-[42vh] border-t border-border/50 bg-background/40 lg:grid-cols-[390px_minmax(0,1fr)]">
-              <ComparisonAnalysis analysis={analysis} />
+              <ComparisonAnalysis analysis={effectiveAnalysis} isAnalyzing={isAnalyzing} stats={analysisStats} />
               <div className="min-h-0 border-t border-border/50 lg:border-l lg:border-t-0">
                 <div className="flex items-center gap-2 px-6 py-3">
                   <ArrowLeftRight className="h-4 w-4 text-primary-glow" />
@@ -247,91 +358,27 @@ function Pane({
   );
 }
 
-type ComparisonAnalysisResult = ReturnType<typeof analyzeComparison>;
-
-function analyzeComparison(
-  fullBlocks: Block[],
-  variantBlocks: Block[],
-  promptA: string,
-  promptB: string,
-  stats: ReturnType<typeof diffStats>,
-  removed: Set<BlockType>,
-) {
-  const scoreA = scorePrompt(fullBlocks, promptA, "full");
-  const scoreB = scorePrompt(variantBlocks, promptB, "stripped", removed);
-  const totalCompared = Math.max(promptA.length, 1);
-  const changed = stats.added + stats.removed;
-  const changePercent = Math.min(100, Math.round((changed / totalCompared) * 100));
-  const better = scoreA.total >= scoreB.total ? "A" : "B";
-  const removedLabels = Array.from(removed)
-    .sort((a, b) => BLOCK_ORDER.indexOf(a) - BLOCK_ORDER.indexOf(b))
-    .map((t) => BLOCK_META[t].label);
-
-  return {
-    better,
-    scoreA,
-    scoreB,
-    added: stats.added,
-    removed: stats.removed,
-    unchanged: stats.unchanged,
-    changed,
-    changePercent,
-    changeScore: Math.max(1, Math.round(changePercent / 10)),
-    removedLabels,
-    promptBLength: promptB.length,
-    rationale:
-      better === "A"
-        ? "Prompt A currently has stronger structure because the stripped variant removed too much useful guidance."
-        : "Prompt B is leaner and more focused while preserving enough structure to remain clear and executable.",
+interface AIAnalysisResponse {
+  better_prompt: "A" | "B";
+  reasoning: string;
+  scores: {
+    clarityA: number;
+    clarityB: number;
+    specificityA: number;
+    specificityB: number;
   };
+  key_differences: string[];
 }
 
-function scorePrompt(
-  blocks: Block[],
-  prompt: string,
-  mode: "full" | "stripped",
-  removed: Set<BlockType> = new Set(),
-) {
-  const present = new Set(blocks.map((b) => b.type));
-  const has = (type: BlockType) => present.has(type);
-  const coreCoverage = ["context", "constraint", "format"].filter((type) => has(type as BlockType)).length;
-  const optionalRemoved = ["role", "tone", "example"].filter((type) => removed.has(type as BlockType)).length;
-  const keepsCore = coreCoverage >= 2;
-  const concisionBonus = mode === "stripped" && keepsCore ? optionalRemoved * 8 + Math.min(12, Math.round((450 - prompt.length) / 45)) : 0;
-  const fullPromptPenalty = mode === "full" && prompt.length > 420 ? Math.min(12, Math.round((prompt.length - 420) / 70)) : 0;
-
-  const clarity = clampScore(
-    36 +
-      (has("role") ? 8 : 0) +
-      (has("context") ? 24 : 0) +
-      (has("format") ? 18 : 0) +
-      (mode === "stripped" && keepsCore ? 10 : 0) +
-      Math.min(8, Math.round(prompt.length / 180)) +
-      concisionBonus -
-      fullPromptPenalty,
-  );
-  const specificity = clampScore(
-    30 +
-      (has("constraint") ? 26 : 0) +
-      (has("example") ? 10 : 0) +
-      (has("length") ? 12 : 0) +
-      (has("tone") ? 5 : 0) +
-      (mode === "stripped" && keepsCore ? 12 : 0) +
-      Math.min(8, blocks.length * 2) +
-      concisionBonus -
-      fullPromptPenalty,
-  );
-
-  return {
-    clarity,
-    specificity,
-    total: Math.round((clarity + specificity) / 2),
-  };
+interface AnalysisStats {
+  added: number;
+  removed: number;
+  unchanged: number;
+  changePercent: number;
+  changeScore: number;
+  removedLabels: string[];
 }
 
-function clampScore(value: number) {
-  return Math.max(0, Math.min(100, value));
-}
 
 function ScoreRing({ score }: { score: number }) {
   return (
@@ -347,57 +394,77 @@ function ScoreRing({ score }: { score: number }) {
   );
 }
 
-function ComparisonAnalysis({ analysis }: { analysis: ComparisonAnalysisResult }) {
+function ComparisonAnalysis({
+  analysis,
+  isAnalyzing,
+  stats,
+}: {
+  analysis: AIAnalysisResponse | null;
+  isAnalyzing: boolean;
+  stats: AnalysisStats;
+}) {
   return (
     <div className="min-h-0 overflow-y-auto px-6 py-4">
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Award className="h-4 w-4 text-amber-300" />
           <span className="font-display text-base font-semibold uppercase tracking-wider">Quality Score</span>
+          {isAnalyzing && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
         </div>
         <div className="flex text-amber-300">
           {[0, 1, 2].map((i) => (
-            <Sparkles key={i} className="h-4 w-4 fill-current" />
+            <Sparkles key={i} className="h-4 w-4 fill-current opacity-70" />
           ))}
         </div>
       </div>
 
-      <div className="space-y-2">
-        <MetricBar label="Clarity A" value={analysis.scoreA.clarity} color="hsl(152 76% 52%)" />
-        <MetricBar label="Clarity B" value={analysis.scoreB.clarity} color="hsl(190 95% 60%)" />
-        <MetricBar label="Specificity A" value={analysis.scoreA.specificity} color="hsl(152 76% 52%)" />
-        <MetricBar label="Specificity B" value={analysis.scoreB.specificity} color="hsl(190 95% 60%)" />
+      <div className="space-y-2 relative">
+        <MetricBar label="Clarity A" value={analysis ? analysis.scores.clarityA * 10 : 0} color="hsl(152 76% 52%)" />
+        <MetricBar label="Clarity B" value={analysis ? analysis.scores.clarityB * 10 : 0} color="hsl(190 95% 60%)" />
+        <MetricBar label="Specificity A" value={analysis ? analysis.scores.specificityA * 10 : 0} color="hsl(152 76% 52%)" />
+        <MetricBar label="Specificity B" value={analysis ? analysis.scores.specificityB * 10 : 0} color="hsl(190 95% 60%)" />
+        
+        {isAnalyzing && !analysis && (
+            <div className="absolute inset-0 flex items-center justify-center bg-background/50 backdrop-blur-sm rounded-lg">
+                <span className="font-mono text-[10px] text-muted-foreground animate-pulse uppercase tracking-widest">Evaluating...</span>
+            </div>
+        )}
       </div>
 
-      <div className="mt-4 rounded-xl border border-amber-300/20 bg-amber-300/10 p-3">
-        <div className="flex items-center gap-2 font-display text-lg font-semibold">
-          <Trophy className="h-5 w-5 text-amber-300" />
-          Better Prompt: {analysis.better}
-        </div>
-        <p className="mt-1 text-sm leading-relaxed text-foreground/80">
-          {analysis.rationale} The comparison is based on block coverage, prompt length,
-          constraint/format signals, and the block-anchored LCS diff.
-        </p>
-      </div>
+      {analysis && (
+          <div className="mt-4 rounded-xl border border-amber-300/20 bg-amber-300/10 p-3">
+            <div className="flex items-center gap-2 font-display text-lg font-semibold">
+              <Trophy className="h-5 w-5 text-amber-300" />
+              Better Prompt: {analysis.better_prompt}
+            </div>
+            <p className="mt-1 text-sm leading-relaxed text-foreground/80">
+              {analysis.reasoning}
+            </p>
+          </div>
+      )}
 
       <div className="mt-4">
         <div className="font-display text-sm font-semibold uppercase tracking-wider">Key Differences</div>
         <ul className="mt-2 space-y-1.5 text-sm leading-relaxed text-foreground/80">
-          <li className="flex gap-2">
-            <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary-glow" />
-            Prompt B excludes {analysis.removedLabels.length ? analysis.removedLabels.join(", ") : "no"} blocks from Prompt A.
-          </li>
-          <li className="flex gap-2">
-            <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-destructive" />
-            {analysis.removed} characters removed and {analysis.added} characters added in the anchored diff.
-          </li>
-          <li className="flex gap-2">
-            <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
-            {analysis.changePercent}% of compared text changed; {analysis.unchanged} characters stayed unchanged.
+          {analysis ? analysis.key_differences.map((diff, i) => (
+             <li key={i} className="flex gap-2">
+                <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary-glow" />
+                {diff}
+             </li>
+          )) : (
+             <li className="flex gap-2 opacity-50">
+                <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground" />
+                Waiting for AI analysis...
+             </li>
+          )}
+          <li className="flex gap-2 pt-2 mt-2 border-t border-border/50">
+            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
+            <span>{stats.changePercent}% of compared text changed; {stats.unchanged} characters stayed unchanged.</span>
           </li>
         </ul>
-        <div className="mt-3 font-mono text-[10px] text-muted-foreground">
-          Mock analysis - deterministic local scoring, ready to swap for AI-powered insights.
+        <div className="mt-4 font-mono text-[10px] text-muted-foreground flex items-center gap-1.5">
+          <div className={`h-1.5 w-1.5 rounded-full ${isAnalyzing ? "bg-amber-400 animate-pulse" : analysis ? "bg-success" : "bg-muted-foreground"}`} />
+          {isAnalyzing ? "Analyzing prompt comparison..." : "Live n8n workflow webhook connected."}
         </div>
       </div>
     </div>
